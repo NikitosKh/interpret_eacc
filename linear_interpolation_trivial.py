@@ -74,8 +74,8 @@ def evaluate_model(dataset, model):
     total_samples = 0
 
     for batch in tokenized_dataset['train']:
-        input_ids = torch.tensor(batch['input_ids']).to(device)
-        attention_mask = torch.tensor(batch['attention_mask']).to(device)
+        input_ids = torch.tensor(batch['input_ids'])
+        attention_mask = torch.tensor(batch['attention_mask'])
 
         with torch.no_grad():
             outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
@@ -100,7 +100,7 @@ def linear_interpolation_merge_eval(number_of_combinations):
 
     
     plt.title('Plot of Y against X')
-    plt.xlabel('X-axis label')
-    plt.ylabel('Y-axis label')
+    plt.xlabel('lambda')
+    plt.ylabel('loss')
 
 linear_interpolation_merge_eval(10)
