@@ -13,8 +13,8 @@ model_directory_math = '/Users/nikxoma/proj/model_weights/finetuned_gpt2'
 model_directory_bio = '/Users/nikxoma/proj/model_weights/gpt2_bio'
 
 
-tokenizer = GPT2Tokenizer
-
+tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+tokenizer.pad_token = tokenizer.eos_token
 
 model_math = GPT2LMHeadModel.from_pretrained(model_directory_math)
 model_bio = GPT2LMHeadModel.from_pretrained(model_directory_bio)
