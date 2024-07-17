@@ -5,14 +5,15 @@ import numpy as np
 
 
 class MergedModel(nn.Module):
-  def __init__(self, models, tokenizer, configs):
+  def __init__(self, models, tokenizer, configs, cutting_threshold=0.5):
     super(MergedModel, self).__init__()
+    self.cutting_threshold=cutting_threshold
     self.models=nn.ModuleList(models)
     self.tokenizer=tokenizer
     self.same_architecture=configs['same_architecture']
     self.find_transition_matrices()
     self.tokenizer.pad_token = self.tokenizer.eos_token
-    self.set_trainable_parameters(0)   
+    self.set_trainable_parameters()   
 
   def find_transition_matrices(self):
     n=len(self.models)
@@ -34,19 +35,18 @@ class MergedModel(nn.Module):
         error = np.mean((transformed_embeddings - embed_j) ** 2)
         print("Mean Squared Error:", error)
 
-  def set_trainable_parameters(self, threshold=0.5):
+  def set_trainable_parameters(self):
     for model in self.models:
       for name, param in model.named_parameters():
         param.requires_grad = False
 
       for name, param in model.named_parameters():
-        if any(f"{i}" in name for i in range(int(threshold*12), 13)) or ('0' in name):
+        if any(f"{i}" in name for i in range(int(self.cutting_threshold*12), 13)) or ('0' in name):
           param.requires_grad = True
                           
-  def forward(self, input_ids, attention_mask=None, labels=None, cutting_threshold=0.5, max_tokens=1):
+  def forward(self, input_ids, attention_mask=None, labels=None, max_tokens=1):
     # output: generated tokens' labels of shape (max_tokens, vocab_size) probably 
-    self.set_trainable_parameters(cutting_threshold)   
-    second_half_layers = [model.transformer.h[int(cutting_threshold*len(model.transformer.h)):] for model in self.models]
+    second_half_layers = [model.transformer.h[int(self.cutting_threshold*len(model.transformer.h)):] for model in self.models]
     
     generated_tokens=[]
     for j in range(max_tokens):
@@ -56,7 +56,7 @@ class MergedModel(nn.Module):
           input_ids += torch.cat(generated_tokens, 0).argmax(-1).view(j).tolist()
         with torch.no_grad():
           all_model_embeds = self.models[i](torch.tensor(input_ids), output_hidden_states=True).hidden_states
-          model_embeds=all_model_embeds[int(cutting_threshold*len(self.models[i].transformer.h))]
+          model_embeds=all_model_embeds[int(self.cutting_threshold*len(self.models[i].transformer.h))]
         if i == 0:
           joint_residual = model_embeds
         else:
@@ -92,7 +92,7 @@ tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
 model2 = AutoModelForCausalLM.from_pretrained(model_name2)  
 
 configs={'same_architecture': True}
-mod=MergedModel([model1, model2], tokenizer1, configs)
+mod=MergedModel([model1, model2], tokenizer1, configs, cutting_threshold=0.5)
 
 print(mod(tokenizer1("I am stupid", return_tensors='pt', padding=True)['input_ids'].squeeze().tolist()))
 
