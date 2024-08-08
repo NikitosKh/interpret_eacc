@@ -4,8 +4,6 @@ from einops import einsum
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from torch.utils.data import Dataset, DataLoader
 import wandb
-from torch.utils.data import Dataset, DataLoader 
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import tqdm
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
@@ -235,7 +233,7 @@ dataset = TextDataset('shakespeare.txt', tokenizer1, max_len  = 512)
 dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
 
 
-optimizer = torch.optim.Adam(merged.parameters(), lr = 3 * 10 ** -4)
+optimizer = torch.optim.Adam(merged.parameters(), lr = training_cfg.learning_rate)
 wandb_config = {
         "learning_rate": training_cfg.learning_rate,
         "epochs": training_cfg.num_train_epochs,
