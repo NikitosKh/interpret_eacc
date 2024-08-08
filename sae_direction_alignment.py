@@ -7,6 +7,8 @@ import wandb
 from torch.utils.data import Dataset, DataLoader 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import tqdm
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+import os
 
 
 class Autoencoder(nn.Module):
@@ -100,36 +102,74 @@ class TextDataset(Dataset):
     encoding = self.tokenizer(line, truncation = True, max_length = self.max_len, padding = 'max_length', return_tensors = 'pt')
     return encoding['input_ids'].squeeze()
 
-def save_model(model, path):
-  torch.save(model.state_dict(), path)
-
 def load_model(model, path):
   model.load_state_dict(torch.load(path))
   return model 
 
+class EarlyStopping:
+    def __init__(self, 
+                 patience=3, 
+                 min_delta=0,
+                 scheduler=None):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_score = None
+        self.epochs_no_improve = 0
+        self.early_stop = False
+        self.scheduler=scheduler
 
-def train(model, dataloader, optimizer, cfg):
-  model.train()
-  for epoch in range(cfg.num_train_epochs):
-    total_loss = 0 
-    for i, batch in enumerate(dataloader):
-      optimizer.zero_grad()
-      loss, (l1, l2, cos) = model(batch.to(device))
+    def __call__(self, score):
+        if self.best_score is None:
+            self.best_score = score
+        elif score < self.best_score + self.min_delta:
+            self.epochs_no_improve += 1
+            if self.epochs_no_improve >= self.patience/2:
+                self.scheduler.step(score)
+            if self.epochs_no_improve >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.epochs_no_improve = 0
 
-      wandb.log({'Training Loss': loss}, step=i)
-      wandb.log({'l1 Loss': l1}, step=i)
-      wandb.log({'l2 Loss': l2}, step=i)
-      wandb.log({'cos_loss Loss': cos}, step=i)
+def train(model, train_dataloader, optimizer, cfg):
+    model.to(device)
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5, verbose=True)
+    early_stopping = EarlyStopping(patience=50, min_delta=0.001, scheduler=scheduler)
 
-      loss.backward()
+    for epoch in range(cfg.num_train_epochs):
+        model.train()
+        total_loss = 0
+        for i, batch in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            loss, (l1, l2, cos) = model(batch.to(device))
 
-      optimizer.step()
-      total_loss += loss.item()
-    average_loss = total_loss / len(dataloader)
-    save_model(model, cfg.output_dir)
+            wandb.log({'Training Loss': loss}, step=i)
+            wandb.log({'l1 Loss': l1}, step=i)
+            wandb.log({'l2 Loss': l2}, step=i)
+            wandb.log({'cos_loss Loss': cos}, step=i)
 
-    print(f"Epoch {epoch + 1}/{epoch}, Average loss : {average_loss}")
-  return model 
+            loss.backward()
+            optimizer.step()
+            total_loss += loss
+            early_stopping(loss)
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
+            
+        average_loss = total_loss / len(dataloader)
+
+        print(f"Epoch {epoch + 1}/{epoch}, Average loss : {average_loss}")
+        # Save model checkpoint
+        save_model(model, cfg.output_dir, epoch, average_loss)
+
+    return model
+
+def save_model(model, output_dir, epoch, loss):
+    model_save_path = f"{output_dir}/model_epoch_{epoch+1}_loss_{loss:.4f}.pt"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    torch.save(model.state_dict(), model_save_path)
+    print(f"Model saved to {model_save_path}")
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
