@@ -267,6 +267,17 @@ trained_model = train(merged, dataloader, optimizer, training_cfg)
 wandb.finish()
 
 
+def load_model(model, path):
+  model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+  return model
+
+model4=load_model(model=merged,
+                 path="./results/model_epoch_2_loss_0.0000.pt")
+
+
+
+
+
 import einops
 import copy
 
@@ -274,15 +285,16 @@ test_input = tokenizer1(["That beauty still may live in thine or thee.", "This i
 
 input_gpt2 = tokenizer1(["That beauty still may live in thine or thee.", "This is another test"], return_tensors='pt', padding=True)['input_ids'].to(device)
 
-for i in range(20):
+for i in range(30):
     output = model1(test_input, output_hidden_states=True).hidden_states[-6]
     output2 = model2(test_input, output_hidden_states=True).hidden_states[-6]
     second_half_layers = model1.transformer.h[-6:]
-    print(merged.autoencoders[0].W_encode.shape)
-    t=nn.ReLU()(einsum(merged.autoencoders[0].W_encode, output, "hui latdim, bsz sqln hui -> bsz sqln latdim"))
-    print(t.shape, merged.autoencoders[0].W_decode.shape)
-    t=einsum(merged.autoencoders[1].W_decode, t, "latdim hui, bsz sqln latdim -> bsz sqln hui")
+    print(model4.autoencoders[0].W_encode.shape)
+    t=nn.ReLU()(einsum(model4.autoencoders[0].W_encode, output, "hui latdim, bsz sqln hui -> bsz sqln latdim"))
+    print(t.shape, model4.autoencoders[0].W_decode.shape)
+    t=einsum(model4.autoencoders[1].W_decode, t, "latdim hui, bsz sqln latdim -> bsz sqln hui")
     print("dsfsdfsdf", nn.MSELoss(reduction='mean')(t, output2))
+    t+=output2
 
     half_model_0_output = t
     for i, layer_module in enumerate(second_half_layers):
@@ -293,5 +305,10 @@ for i in range(20):
     input_gpt2=torch.cat([input_gpt2, model2(input_gpt2).logits[:, -1, :].argmax(dim=-1).unsqueeze(1)], dim=1)
     print(test_input, input_gpt2)
 
+
+print(tokenizer1.decode(test_input[0]))
+print(tokenizer1.decode(input_gpt2[0]))
+print(tokenizer1.decode(test_input[1]))
+print(tokenizer1.decode(input_gpt2[1]))      
 
       
