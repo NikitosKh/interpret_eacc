@@ -95,23 +95,3 @@ class AutoencoderMerged(nn.Module):
 
         return transition_matrices
 
-
-
-# training
-class TextDataset(Dataset):
-  def __init__(self, file_path, tokenizer, max_len):
-    super(TextDataset, self).__init__()
-    self.tokenizer = tokenizer
-    self.max_len = max_len
-    with open(file_path, 'r', encoding = 'utf-8') as file:
-      self.lines = file.readlines()
-    self.lines = [line.strip() for line in self.lines if line.strip()]
-
-  def __len__(self):
-    return len(self.lines)
-
-  def __getitem__(self, idx) :
-    line = self.lines[idx].strip()
-    encoding = self.tokenizer(line, truncation = True, max_length = self.max_len, padding = 'max_length', return_tensors = 'pt')
-    return encoding['input_ids'].squeeze()
-
