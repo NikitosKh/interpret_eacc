@@ -113,28 +113,28 @@ class EarlyStopping:
                  scheduler=None):
         self.patience = patience
         self.min_delta = min_delta
-        self.best_loss = None
+        self.best_score = None
         self.epochs_no_improve = 0
         self.early_stop = False
         self.scheduler=scheduler
 
-    def __call__(self, loss):
-        if self.best_loss is None:
-            self.best_loss = loss
-        elif loss > self.best_loss + self.min_delta:
+    def __call__(self, score):
+        if self.best_score is None:
+            self.best_score = score
+        elif score < self.best_score + self.min_delta:
             self.epochs_no_improve += 1
             if self.epochs_no_improve >= self.patience/2:
-                self.scheduler.step(loss)
+                self.scheduler.step(score)
             if self.epochs_no_improve >= self.patience:
                 self.early_stop = True
         else:
-            self.best_loss = loss
+            self.best_score = score
             self.epochs_no_improve = 0
 
 def train(model, train_dataloader, optimizer, cfg):
     model.to(device)
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5, verbose=True)
-    early_stopping = EarlyStopping(patience=50, min_delta=0.01, scheduler=scheduler)
+    early_stopping = EarlyStopping(patience=50, min_delta=0.001, scheduler=scheduler)
 
     for epoch in range(cfg.num_train_epochs):
         model.train()
@@ -187,8 +187,8 @@ class CustomTrainingArguments(TrainingArguments):
                  **kwargs):
       
         super().__init__(*args, **kwargs)
-        self.multiplier=multiplier   # latent_dim=res_dim * d_model
-        self.d_models=d_models
+        self.multiplier=2                    # latent_dim=res_dim * d_model
+        self.d_models=[768, 768]
         self.lambda_l1=lambda_l1
         self.lambda_cos=lambda_cos
 
@@ -235,7 +235,7 @@ dataset = TextDataset('shakespeare.txt', tokenizer1, max_len  = 512)
 dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
 
 
-optimizer = torch.optim.Adam(merged.parameters(), lr = 3 * 10 ** -4)
+optimizer = torch.optim.Adam(merged.parameters(), lr = training_cfg.learning_rate)
 wandb_config = {
         "learning_rate": training_cfg.learning_rate,
         "epochs": training_cfg.num_train_epochs,
