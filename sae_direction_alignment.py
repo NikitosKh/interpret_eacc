@@ -25,7 +25,7 @@ class Autoencoder(nn.Module):
         self.cfg = cfg
 
     def forward(self, x):
-        latent_vector = einsum(x, self.W_encode, 'b c d, d h -> b c h')
+        latent_vector = nn.ReLU()(einsum(x, self.W_encode, 'b c d, d h -> b c h'))
         loss_l1 = self.cfg.lambda_l1*torch.abs(latent_vector).mean()
 
         restored = einsum(latent_vector, self.W_decode, 'b c h, h d -> b c d')
@@ -55,7 +55,7 @@ class AutoencoderMerged(nn.Module):
         model_outputs = []
         with torch.no_grad():
             for model in self.models:
-                output = model(x, output_hidden_states=True).hidden_states[-3]
+                output = model(x, output_hidden_states=True).hidden_states[-6]
                 model_outputs.append(output)
 
         losses = []
@@ -72,7 +72,7 @@ class AutoencoderMerged(nn.Module):
         cos_loss=[]
         for i in range(1, len(self.models)):
             cos_loss.append(self.cfg.lambda_cos*(1-self.cos(vs[i], vs[0])).mean(dim=0))
-            losses[i] += cos_loss[-1]    
+            losses[i] += cos_loss[-1]
 
         cos_loss=sum(cos_loss)/len(cos_loss)
         l1_log=sum(l1_log)/len(l1_log)
@@ -82,12 +82,27 @@ class AutoencoderMerged(nn.Module):
         return losses, (l1_log, l2_log, cos_loss)
 
 
+    def get_transition_matrices(self):
+        transition_matrices=[[]*len(self.models) for _ in range(len(self.models))]
+
+        for i in range(len(self.models)):
+            for j in range(len(self.models)):
+                if i != j:
+                    transition_matrices[i][j] = self.autoencoders[i].W_encode @ self.autoencoders[j].W_decode
+                    transition_matrices[j][i] = self.autoencoders[j].W_encode @ self.autoencoders[i].W_decode
+                else:
+                    transition_matrices[i][j] = torch.eye(self.autoencoders[i].hidden_dim)
+
+        return transition_matrices
+
+
+
 # training
 class TextDataset(Dataset):
   def __init__(self, file_path, tokenizer, max_len):
     super(TextDataset, self).__init__()
     self.tokenizer = tokenizer
-    self.max_len = max_len 
+    self.max_len = max_len
     with open(file_path, 'r', encoding = 'utf-8') as file:
       self.lines = file.readlines()
     self.lines = [line.strip() for line in self.lines if line.strip()]
@@ -101,12 +116,12 @@ class TextDataset(Dataset):
     return encoding['input_ids'].squeeze()
 
 def load_model(model, path):
-  model.load_state_dict(torch.load(path))
-  return model 
+  model.load_state_dict(torch.load(path), map_location=torch.device('cpu'))
+  return model
 
 class EarlyStopping:
-    def __init__(self, 
-                 patience=3, 
+    def __init__(self,
+                 patience=3,
                  min_delta=0,
                  scheduler=None):
         self.patience = patience
@@ -132,7 +147,7 @@ class EarlyStopping:
 def train(model, train_dataloader, optimizer, cfg):
     model.to(device)
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5, verbose=True)
-    early_stopping = EarlyStopping(patience=50, min_delta=0.01, scheduler=scheduler)
+    early_stopping = EarlyStopping(patience=50, min_delta=0.001, scheduler=scheduler)
 
     for epoch in range(cfg.num_train_epochs):
         model.train()
@@ -153,7 +168,7 @@ def train(model, train_dataloader, optimizer, cfg):
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
-            
+
         average_loss = total_loss / len(dataloader)
 
         print(f"Epoch {epoch + 1}/{epoch}, Average loss : {average_loss}")
@@ -176,14 +191,14 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 from transformers import TrainingArguments
 
 class CustomTrainingArguments(TrainingArguments):
-    def __init__(self, 
-                 *args, 
-                 multiplier=1, 
-                 d_models=[], 
-                 lambda_l1=1, 
-                 lambda_cos=2, 
+    def __init__(self,
+                 *args,
+                 multiplier=1,
+                 d_models=[],
+                 lambda_l1=1,
+                 lambda_cos=2,
                  **kwargs):
-      
+
         super().__init__(*args, **kwargs)
         self.multiplier=multiplier   # latent_dim=res_dim * d_model
         self.d_models=d_models
@@ -193,13 +208,13 @@ class CustomTrainingArguments(TrainingArguments):
 training_cfg = CustomTrainingArguments(
     output_dir='./results',          # output directory
     learning_rate=3e-4,              # learning rate
-    multiplier=2,                    # katent_dim=res_dim * d_model
-    d_models=[768, 768],             # no comments      
+    multiplier=70,                    # katent_dim=res_dim * d_model
+    d_models=[768, 768],             # no comments
     per_device_train_batch_size=32,  # batch size for training
-    lambda_l1=1,
-    lambda_cos=2,
+    lambda_l1=0.5,
+    lambda_cos=0.5,
     # per_device_eval_batch_size=16,    # batch size for evaluation
-    num_train_epochs=1,              # total number of training epochs
+    num_train_epochs=3,              # total number of training epochs
     # commented but to be done
     # weight_decay=0.01,               # strength of weight decay
 )
@@ -228,7 +243,7 @@ losses = merged(test_input)
 print("Losses:", losses)
 
 
-losses = [loss for loss in losses]        
+losses = [loss for loss in losses]
 dataset = TextDataset('shakespeare.txt', tokenizer1, max_len  = 512)
 dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
 
@@ -250,3 +265,33 @@ trained_model = train(merged, dataloader, optimizer, training_cfg)
 
 
 wandb.finish()
+
+
+import einops
+import copy
+
+test_input = tokenizer1(["That beauty still may live in thine or thee.", "This is another test"], return_tensors='pt', padding=True)['input_ids'].to(device)
+
+input_gpt2 = tokenizer1(["That beauty still may live in thine or thee.", "This is another test"], return_tensors='pt', padding=True)['input_ids'].to(device)
+
+for i in range(20):
+    output = model1(test_input, output_hidden_states=True).hidden_states[-6]
+    output2 = model2(test_input, output_hidden_states=True).hidden_states[-6]
+    second_half_layers = model1.transformer.h[-6:]
+    print(merged.autoencoders[0].W_encode.shape)
+    t=nn.ReLU()(einsum(merged.autoencoders[0].W_encode, output, "hui latdim, bsz sqln hui -> bsz sqln latdim"))
+    print(t.shape, merged.autoencoders[0].W_decode.shape)
+    t=einsum(merged.autoencoders[1].W_decode, t, "latdim hui, bsz sqln latdim -> bsz sqln hui")
+    print("dsfsdfsdf", nn.MSELoss(reduction='mean')(t, output2))
+
+    half_model_0_output = t
+    for i, layer_module in enumerate(second_half_layers):
+        half_model_0_output = layer_module(half_model_0_output)[0]
+        
+    res=model1.lm_head(model1.transformer.ln_f(half_model_0_output.squeeze(0))) 
+    test_input=torch.cat([test_input, res[:, -1, :].argmax(dim=-1).unsqueeze(1)], dim=1)
+    input_gpt2=torch.cat([input_gpt2, model2(input_gpt2).logits[:, -1, :].argmax(dim=-1).unsqueeze(1)], dim=1)
+    print(test_input, input_gpt2)
+
+
+      
