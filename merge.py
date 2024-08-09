@@ -2,98 +2,134 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn as nn
 import numpy as np
+from sae_direction_alignment import Autoencoder, AutoencoderMerged
+import einops
 
 
 class MergedModel(nn.Module):
-  def __init__(self, models, tokenizer, configs, cutting_threshold=0.5):
-    super(MergedModel, self).__init__()
-    self.cutting_threshold=cutting_threshold
-    self.models=nn.ModuleList(models)
-    self.tokenizer=tokenizer
-    self.same_architecture=configs['same_architecture']
-    self.find_transition_matrices()
-    self.tokenizer.pad_token = self.tokenizer.eos_token
-    self.set_trainable_parameters()   
+    def __init__(self, 
+                models, 
+                configs, 
+                device,
+                joint_autoencoders,
+                ):
+      
+      super(MergedModel, self).__init__()
+      for model in models:
+          model=model.to(device)
+      self.models=nn.ModuleList(models)
+      self.same_architecture = configs.same_architecture
+      # self.set_trainable_parameters() 
+      for autoencoder in joint_autoencoders:
+          autoencoder=autoencoder.to(device)
+      self.transitions = {joint_autoencoder.layer: joint_autoencoder.get_transitions() for joint_autoencoder in joint_autoencoders}
+      self.cfg=configs
+      self.device=device
 
-  def find_transition_matrices(self):
-    n=len(self.models)
-    self.W = [[0 for _ in range(n)] for _ in range(n)]
-
-    for i in range(n):
-      for j in range(i+1,n):
-        embed_i=np.array(self.models[i].get_input_embeddings().weight.detach().cpu())
-        embed_j=np.array(self.models[j].get_input_embeddings().weight.detach().cpu())
-
-        print(f"fitting {i} to {j} started")
-        self.W[i][j] = torch.tensor(np.linalg.lstsq(embed_i, embed_j, rcond=None)[0])
-        print(f"fitting {i} to {j} done")
-        self.W[j][i] = torch.tensor(np.linalg.lstsq(embed_j, embed_i, rcond=None)[0])
-        print(f"fitting {j} to {i} done")
-
-        # Verify the transformation
-        transformed_embeddings = np.dot(embed_i, self.W[i][j].detach().numpy())
-        error = np.mean((transformed_embeddings - embed_j) ** 2)
-        print("Mean Squared Error:", error)
-
-  def set_trainable_parameters(self):
-    for model in self.models:
-      for name, param in model.named_parameters():
-        param.requires_grad = False
-
-      for name, param in model.named_parameters():
-        if any(f"{i}" in name for i in range(int(self.cutting_threshold*12), 13)) or ('0' in name):
-          param.requires_grad = True
-                          
-  def forward(self, input_ids, attention_mask=None, labels=None, max_tokens=1):
-    # output: generated tokens' labels of shape (max_tokens, vocab_size) probably 
-    second_half_layers = [model.transformer.h[int(self.cutting_threshold*len(model.transformer.h)):] for model in self.models]
     
-    generated_tokens=[]
-    for j in range(max_tokens):
-      # run all the models separately and add the hidden states of the middle layer  
-      for i in range(len(self.models)):
-        if j != 0:
-          input_ids += torch.cat(generated_tokens, 0).argmax(-1).view(j).tolist()
-        with torch.no_grad():
-          all_model_embeds = self.models[i](torch.tensor(input_ids), output_hidden_states=True).hidden_states
-          model_embeds=all_model_embeds[int(self.cutting_threshold*len(self.models[i].transformer.h))]
-        if i == 0:
-          joint_residual = model_embeds
-        else:
-          joint_residual = model_embeds + torch.einsum('ij, bsj -> bsi', torch.tensor(self.W[i][0]), model_embeds)
+    def forward(self, input_ids):
+        input_ids=input_ids.to(self.device)
+        # input_ids: tensor of shape (batch_size, max_tokens)
+        current_slice_of_modules = [None] * len(self.models)
+        logits=[input_ids] * len(self.models)
+        ouptut=[]
+        for k in range(input_ids.shape[-1]):
+            inp=input_ids[:, :k+1]
+            logits=[inp] * len(self.models)
+            prev_i=0
+            for iter, (i, transitions) in enumerate(self.transitions.items()):
+                for j, model in enumerate(self.models):
+                  
+                    if iter == 0:
+                        class Embedding(nn.Module):
+                            def __init__(self, wte, wpe, drop):
+                                super(Embedding, self).__init__()
+                                self.wte = wte
+                                self.wpe = wpe
+                                self.drop = drop
 
-      # the exact architecture is important because modules have different names(not only that its the same)!
-      if self.same_architecture:
-        # run the rest layers of our models on the joint residual and add the results
-        half_model_0_output = joint_residual
-        for i, layer_module in enumerate(second_half_layers[0]):
-          half_model_0_output = layer_module(half_model_0_output)[0]
-        logits = half_model_0_output
+                            def forward(self, x):
+                                return (self.drop(self.wte(x) + self.wpe(torch.arange(x.size(1), device=x.device))),)
 
-        for i in range(1, len(self.models)):
-          half_model_i_output = joint_residual
-          for layer_module in second_half_layers[i]:
-            half_model_i_output = layer_module(half_model_i_output)[0]
-          logits += half_model_i_output
-        logits = self.models[0].lm_head(self.models[0].transformer.ln_f(logits.squeeze(0)[-1]))
+                        current_slice_of_modules[j] = [Embedding(model.transformer.wte, model.transformer.wpe, model.transformer.drop)] + list(model.transformer.h[prev_i:i+1])   
+                    else:
+                        current_slice_of_modules[j] = model.transformer.h[prev_i:i+1]
+                          
+                    prev_i=i    
+                    
+                    if j==0:
+                        for module in current_slice_of_modules[j]:
+                            logits[j]=module(logits[j])[0]
+                    else:
+                        logits_temp=logits[j]
+                        
+                        for module in current_slice_of_modules[j]:
+                            logits_temp=module(logits_temp)[0]
+                            
+                        logits[j]=logits_temp  
+                        logits[0]+=transitions[j][0](logits_temp) 
 
-      generated_tokens.append(logits.unsqueeze(0))
+            last_slice = list(self.models[0].transformer.h[prev_i:])
+            
+            for layer_module in last_slice:
+                logits[0] = layer_module(logits[0])[0]
 
-    return generated_tokens
-  
+            logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))    
 
-model_name1 = "Sharathhebbar24/math_gpt2_sft"
-tokenizer1 = AutoTokenizer.from_pretrained(model_name1)
-model1 = AutoModelForCausalLM.from_pretrained(model_name1)
+                  
+            ouptut.append(logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1))      
+            
+        return torch.cat(ouptut, dim=1) 
+      
+    def generate(self, input_ids, max_tokens=256):
+      # input_ids: tensor of shape (batch_size, max_tokens)
+      current_slice_of_modules = [None] * len(self.models)
+      generated_text=[]
+      for k in range(max_tokens):
+          print(k)
+          logits=[input_ids] * len(self.models)
+          prev_i=0
+          for iter, (i, transitions) in enumerate(self.transitions.items()):
+              for j, model in enumerate(self.models):
+                
+                  if iter == 0:
+                      class Embedding(nn.Module):
+                          def __init__(self, wte, wpe, drop):
+                              super(Embedding, self).__init__()
+                              self.wte = wte
+                              self.wpe = wpe
+                              self.drop = drop
 
+                          def forward(self, x):
+                              return (self.drop(self.wte(x) + self.wpe(torch.arange(x.size(1), device=x.device))),)
 
-model_name2 = "yoavgur/gpt2-bash-history-baseline"
-tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
-model2 = AutoModelForCausalLM.from_pretrained(model_name2)  
+                      current_slice_of_modules[j] = [Embedding(model.transformer.wte, model.transformer.wpe, model.transformer.drop)] + list(model.transformer.h[prev_i:i+1])   
+                  else:
+                      current_slice_of_modules[j] = model.transformer.h[prev_i:i+1]
+                        
+                  prev_i=i    
+                  
+                  if j==0:
+                      for module in current_slice_of_modules[j]:
+                          logits[j]=module(logits[j])[0]
+                  else:
+                      logits_temp=logits[j]
+                      
+                      for module in current_slice_of_modules[j]:
+                          logits_temp=module(logits_temp)[0]
+                          
+                      logits[j]=logits_temp  
+                      logits[0]+=transitions[j][0](logits_temp) 
 
-configs={'same_architecture': True}
-mod=MergedModel([model1, model2], tokenizer1, configs, cutting_threshold=0.5)
+          last_slice = list(self.models[0].transformer.h[prev_i:])
+          
+          for layer_module in last_slice:
+              logits[0] = layer_module(logits[0])[0]
 
-print(mod(tokenizer1("I am stupid", return_tensors='pt', padding=True)['input_ids'].squeeze().tolist()))
+          logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))    
 
-print(tokenizer1.decode(torch.cat(mod(tokenizer1("I am stupid", return_tensors='pt', padding=True)['input_ids'].squeeze().tolist()), 0).argmax(-1)))
+                  
+          input_ids=torch.cat([input_ids, logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1)], dim=1)
+          generated_text.append(logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1))
+          
+      return torch.cat(generated_text, dim=1)  
