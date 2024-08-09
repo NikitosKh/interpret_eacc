@@ -159,7 +159,7 @@ print("Losses:", losses)
 
 
 losses = [loss for loss in losses]
-dataset = TextDataset('shakespeare.txt', tokenizer1, max_len  = 512)
+dataset = TextDataset('./data/shakespeare.txt', tokenizer1, max_len  = 512)
 dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
 
 

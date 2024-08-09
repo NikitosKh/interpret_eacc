@@ -65,7 +65,7 @@ def evaluate_model(model, dataloader, device):
     return avg_loss
 
 
-eval_file_path = 'shakespeare.txt'
+eval_file_path = './data/shakespeare.txt'
 model_weights_path = './results/model_epoch_2_loss_0.0000.pt'
 max_len = 32
 batch_size = 32
