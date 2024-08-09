@@ -8,8 +8,6 @@ Welcome to the Interpret AI repository. This project focuses on developing a mod
 2. [Project Structure](#project-structure)
 3. [Getting Started](#getting-started)
 4. [Training the Joint Sparse Autoencoder](#training-the-joint-sparse-autoencoder)
-5. [Contributing](#contributing)
-6. [License](#license)
 
 ## Introduction
 
