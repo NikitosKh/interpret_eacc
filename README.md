@@ -1,7 +1,3 @@
-Sure! Here's a more detailed and formatted README for the Interpret AI project:
-
----
-
 # Interpret AI
 
 Welcome to the Interpret AI repository. This project focuses on developing a model merging tool that allows for the combination of pretrained models into a single, efficient model with negligible additional training cost compared to pretraining. For more detailed information about our methods, please visit our [website](link-to-the-site).
