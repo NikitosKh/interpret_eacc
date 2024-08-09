@@ -6,14 +6,17 @@ from sae_direction_alignment import Autoencoder, AutoencoderMerged
 import einops
 
 
+class MergedModelArguments():
+    def __init__(self, same_architecture=True):
+        self.same_architecture=same_architecture
+        
+        
 class MergedModel(nn.Module):
     def __init__(self, 
                 models, 
                 configs, 
                 device,
                 joint_autoencoders,
-                # TODO: Implement this
-                #  modules_to_merge=[],
                 ):
       
       super(MergedModel, self).__init__()
@@ -76,9 +79,7 @@ class MergedModel(nn.Module):
             for layer_module in last_slice:
                 logits[0] = layer_module(logits[0])[0]
 
-            logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))    
-
-                  
+            logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))                 
             ouptut.append(logits[0][:, -1, :].unsqueeze(0))  
             
         return einops.einsum(torch.cat(ouptut, dim=0), "a b c -> b a c")
@@ -128,8 +129,6 @@ class MergedModel(nn.Module):
               logits[0] = layer_module(logits[0])[0]
 
           logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))    
-
-                  
           input_ids=torch.cat([input_ids, logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1)], dim=1)
           generated_text.append(logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1))
           

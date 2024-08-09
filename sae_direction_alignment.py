@@ -17,29 +17,37 @@ class Autoencoder(nn.Module):
         self.contex_length = max_len
 
         self.W_encode = nn.Parameter(torch.zeros(d_model, hidden_dim))
+        self.bias_encode = nn.Parameter(torch.zeros(hidden_dim))
         nn.init.xavier_uniform_(self.W_encode)
         self.W_decode = nn.Parameter(torch.zeros(hidden_dim, d_model))
+        self.bias_decode = nn.Parameter(torch.zeros(d_model))
         nn.init.xavier_uniform_(self.W_decode)
-
+        
         self.l2 = nn.MSELoss(reduction='mean')
         self.cfg = cfg
 
     def forward(self, x):
-        latent_vector = nn.ReLU()(einsum(x, self.W_encode, 'b c d, d h -> b c h'))
+        latent_vector = nn.ReLU()(einsum(x, self.W_encode, 'b c d, d h -> b c h') + self.bias_encode)
         loss_l1 = self.cfg.lambda_l1*torch.abs(latent_vector).mean()
 
-        restored = einsum(latent_vector, self.W_decode, 'b c h, h d -> b c d')
+        restored = einsum(latent_vector, self.W_decode, 'b c h, h d -> b c d') + self.bias_decode
         loss_l2 = self.l2(restored, x)
 
         return (latent_vector, loss_l1, loss_l2)
 
 class AutoencoderMerged(nn.Module):
-    def __init__(self, models, cfg, device, max_len=1024, layer=3):
+    def __init__(self, 
+                 models, 
+                 cfg, 
+                 device, 
+                 max_len=1024, 
+                 layer=-2):
         super().__init__()
         self.models = models
         self.cfg = cfg
         self.device = device
         self.autoencoders = nn.ModuleList()
+        self.layer=layer
 
         for res_dim, model in zip(self.cfg.d_models, self.models):
             model = model.to(self.device)
@@ -55,7 +63,7 @@ class AutoencoderMerged(nn.Module):
         model_outputs = []
         with torch.no_grad():
             for model in self.models:
-                output = model(x, output_hidden_states=True).hidden_states[-6]
+                output = model(x, output_hidden_states=True).hidden_states[self.layer]
                 model_outputs.append(output)
 
         losses = []
@@ -82,16 +90,26 @@ class AutoencoderMerged(nn.Module):
         return losses, (l1_log, l2_log, cos_loss)
 
 
-    def get_transition_matrices(self):
-        transition_matrices=[[]*len(self.models) for _ in range(len(self.models))]
+    def get_transitions(self):
+        class Transition(nn.Module):
+            def __init__(self, endoder, decoder):
+                super(Transition, self).__init__()
 
-        for i in range(len(self.models)):
-            for j in range(len(self.models)):
-                if i != j:
-                    transition_matrices[i][j] = self.autoencoders[j].W_decode @ self.autoencoders[i].W_encode
-                    transition_matrices[j][i] = self.autoencoders[i].W_decode @ self.autoencoders[j].W_encode
-                else:
-                    transition_matrices[i][j] = torch.eye(self.autoencoders[i].hidden_dim)
+                self.encoder = endoder
+                self.relu=nn.ReLU()
+                self.decoder = decoder
 
-        return transition_matrices
+            def forward(self, x):
+                latent_vector = nn.ReLU()(einsum(x, self.encoder, 'b c d, d h -> b c h'))
+
+                restored = einsum(latent_vector, self.decoder, 'b c h, h d -> b c d')
+                return restored
+        
+        transitions=[[None]*len(self.models) for _ in range(len(self.models))]
+
+        for i in range(1, len(self.models)):
+            transitions[i][0] = Transition(self.autoencoders[i].W_encode, 
+                                                           self.autoencoders[0].W_decode)
+
+        return transitions
 

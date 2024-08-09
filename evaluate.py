@@ -4,6 +4,9 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments
 from tqdm import tqdm
 import os
+from sae_direction_alignment import Autoencoder, AutoencoderMerged
+from merge import MergedModel, MergedModelArguments
+
 
 class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer, max_len):
@@ -30,17 +33,13 @@ class CustomEvaluateArguments(TrainingArguments):
         self.lambda_l1 = lambda_l1
         self.lambda_cos = lambda_cos
 
-class MergedModelArguments():
-    def __init__(self, same_architecture=True):
-        self.same_architecture=same_architecture
-
 def load_dataset(file_path, tokenizer, max_len, batch_size):
     dataset = TextDataset(file_path, tokenizer, max_len)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     return dataloader
 
-def load_merged_model(model_path, cfg, models, device):
-    merged_model = AutoencoderMerged(models, cfg, device)
+def load_merged_model(model_path, cfg, models, layer, device):
+    merged_model = AutoencoderMerged(models, cfg, layer=layer, device=device)
     merged_model.load_state_dict(torch.load(model_path, map_location=device))
     merged_model.eval()
     return merged_model
@@ -90,9 +89,7 @@ cfg = CustomEvaluateArguments(
     lambda_cos=0.5,
 )
 
-merged_model = load_merged_model(model_weights_path, cfg, [model1, model2], device)
-
-
+merged_model = load_merged_model(model_weights_path, cfg, [model1, model2], layer=-2, device=device)
 
 mergedcfg=MergedModelArguments()
 
