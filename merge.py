@@ -12,6 +12,8 @@ class MergedModel(nn.Module):
                 configs, 
                 device,
                 joint_autoencoders,
+                # TODO: Implement this
+                #  modules_to_merge=[],
                 ):
       
       super(MergedModel, self).__init__()
@@ -77,16 +79,15 @@ class MergedModel(nn.Module):
             logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))    
 
                   
-            ouptut.append(logits[0][:, -1, :].argmax(dim=-1).unsqueeze(1))      
+            ouptut.append(logits[0][:, -1, :].unsqueeze(0))  
             
-        return torch.cat(ouptut, dim=1) 
+        return einops.einsum(torch.cat(ouptut, dim=0), "a b c -> b a c")
       
     def generate(self, input_ids, max_tokens=256):
       # input_ids: tensor of shape (batch_size, max_tokens)
       current_slice_of_modules = [None] * len(self.models)
       generated_text=[]
       for k in range(max_tokens):
-          print(k)
           logits=[input_ids] * len(self.models)
           prev_i=0
           for iter, (i, transitions) in enumerate(self.transitions.items()):
