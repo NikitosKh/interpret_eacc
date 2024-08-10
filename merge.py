@@ -32,13 +32,14 @@ class MergedModel(nn.Module):
       self.device=device
 
     
-    def forward(self, input_ids, return_embeddings=False):
-        input_ids=input_ids.to(self.device)
+    def forward(self, input_ids, return_embeddings=False):        
         # input_ids: tensor of shape (batch_size, max_tokens)
+        input_ids=input_ids.to(self.device)
+        
         current_slice_of_modules = [None] * len(self.models)
         logits=[input_ids] * len(self.models)
         if return_embeddings:
-            embeddings={i: ([], None) for i in self.encoders.keys()}
+            embeddings={i: [[], None] for i in self.encoders.keys()}
             
         logits=[input_ids] * len(self.models)
         prev_i=0
@@ -73,15 +74,13 @@ class MergedModel(nn.Module):
                         
                     logits[j]=logits_temp
                       
-                    if return_embeddings:
-                        embeddings[i][0].append(self.encoders[i][j](logits_temp))
-                        logits[0]+=self.decoders[i][j](embeddings[i][0][-1]) 
-                    else:
-                        logits[0]+=self.decoders[i][j](self.encoders[i][j](logits_temp))              
+                    
+                    logits[0]+=self.decoders[i][j](self.encoders[i][j](logits_temp))
+                        
+                if return_embeddings:
+                        embeddings[i][0].append(self.encoders[i][j](logits[j]).unsqueeze(0))                      
                     
             logits[0]/=len(self.models)  
-            if return_embeddings:
-                embeddings[i][1]=sum(embeddings[i][0])/len(embeddings[i][0])
                     
         last_slice = list(self.models[0].transformer.h[prev_i:])
         
@@ -91,7 +90,7 @@ class MergedModel(nn.Module):
         logits[0]=self.models[0].lm_head(self.models[0].transformer.ln_f(logits[0]))                 
         
         if return_embeddings:
-            embeddings[i][1]=sum(embeddings[i][0])/len(embeddings[i][0])              
+            embeddings={i: [torch.cat(embeddings[i][0], dim=0), (sum(embeddings[i][0])/len(embeddings[i][0])).squeeze(0)] for i in embeddings.keys()}
             return logits[0], embeddings
         else:
             return logits[0]  

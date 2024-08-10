@@ -134,7 +134,7 @@ class AutoencoderMerged(nn.Module):
         
         encoders=[None]*len(self.models)
 
-        for i in range(1, len(self.models)):
+        for i in range(0, len(self.models)):
             encoders[i] = Encoder(self.autoencoders[i].W_encode)
 
         return encoders
