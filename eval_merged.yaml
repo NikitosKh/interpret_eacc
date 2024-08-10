@@ -1,0 +1,9 @@
+multiplier: 70                   # katent_dim=res_dim * d_model
+d_models: [768, 768]            # no comments
+lambda_l1: 0.5
+lambda_cos: 0.5
+layer: -3
+eval_dataset: './data/shakespeare.txt'     # evaluation dataset
+max_len: 32
+batch_size: 32
+checkpoint_to_test: './results/model_epoch_3_loss_0.0000.pt'  # checkpoint to test

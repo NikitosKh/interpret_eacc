@@ -59,7 +59,7 @@ class EarlyStopping:
             self.best_loss = loss
             self.epochs_no_improve = 0
 
-def train(model, train_dataloader, optimizer, cfg):
+def train(model, train_dataloader, device, layer, optimizer, cfg):
     model.to(device)
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5, verbose=True)
     early_stopping = EarlyStopping(patience=50, min_delta=0.001, scheduler=scheduler)
@@ -84,24 +84,20 @@ def train(model, train_dataloader, optimizer, cfg):
                 print("Early stopping")
                 break
 
-        average_loss = total_loss / len(dataloader)
+        average_loss = total_loss / len(train_dataloader)
 
         print(f"Epoch {epoch + 1}/{epoch}, Average loss : {average_loss}")
         # Save model checkpoint
-        save_model(model, cfg.output_dir, epoch, average_loss)
+        save_model(model, cfg.output_dir, epoch, layer, average_loss)
 
     return model
 
-def save_model(model, output_dir, epoch, loss):
-    model_save_path = f"{output_dir}/model_epoch_{epoch+1}_loss_{loss:.4f}.pt"
+def save_model(model, output_dir, epoch, layer, loss):
+    model_save_path = f"{output_dir}/model_epoch_{epoch+1}_layer_{model}_loss_{loss:.4f}.pt"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     torch.save(model.state_dict(), model_save_path)
     print(f"Model saved to {model_save_path}")
-
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 
 from transformers import TrainingArguments
 
@@ -120,63 +116,82 @@ class CustomTrainingArguments(TrainingArguments):
         self.lambda_l1=lambda_l1
         self.lambda_cos=lambda_cos
 
-training_cfg = CustomTrainingArguments(
-    output_dir='./results',          # output directory
-    learning_rate=3e-4,              # learning rate
-    multiplier=70,                    # katent_dim=res_dim * d_model
-    d_models=[768, 768],             # no comments
-    per_device_train_batch_size=32,  # batch size for training
-    lambda_l1=0.5,
-    lambda_cos=0.5,
-    # per_device_eval_batch_size=16,    # batch size for evaluation
-    num_train_epochs=3,              # total number of training epochs
-    # commented but to be done
-    # weight_decay=0.01,               # strength of weight decay
-)
 
-print(f"Using device: {device}")
+import yaml
 
-model_name1 = "Sharathhebbar24/math_gpt2_sft"
-tokenizer1 = AutoTokenizer.from_pretrained(model_name1)
-model1 = AutoModelForCausalLM.from_pretrained(model_name1).to(device)
+def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    with open('./training_sae.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+        f.close()
+        
+    training_cfg = CustomTrainingArguments(
+        output_dir=config['output_dir'],        
+        learning_rate=config['learning_rate'],             
+        multiplier=config['multiplier'],                
+        d_models=config['d_models'],  
+        per_device_train_batch_size=config['batch_size'],
+        lambda_l1=config['lambda_l1'],
+        lambda_cos=config['lambda_cos'],
+        # per_device_eval_batch_size=16,  
+        num_train_epochs=config['num_train_epochs'],       
+        # commented but to be done
+        # weight_decay=0.01,               # strength of weight decay
+    )    
+        
+    model_name1 = "Sharathhebbar24/math_gpt2_sft"
+    tokenizer1 = AutoTokenizer.from_pretrained(model_name1)
+    model1 = AutoModelForCausalLM.from_pretrained(model_name1).to(device)
 
-model_name2 = "yoavgur/gpt2-bash-history-baseline"
-tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
-model2 = AutoModelForCausalLM.from_pretrained(model_name2).to(device)
-
-
-merged = AutoencoderMerged([model1, model2], training_cfg, device).to(device)
-param_count = sum(p.numel() for p in merged.parameters() if p.requires_grad)
-print(f"Number of trainable parameters: {param_count}")
-
-for name, param in merged.named_parameters():
-    print(f"{name}: {param.shape}")
-
-
-test_input = tokenizer1(["I am a test input", "This is another test"], return_tensors='pt', padding=True)['input_ids'].to(device)
-losses = merged(test_input)
-print("Losses:", losses)
+    model_name2 = "yoavgur/gpt2-bash-history-baseline"
+    tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
+    model2 = AutoModelForCausalLM.from_pretrained(model_name2).to(device)
 
 
-losses = [loss for loss in losses]
-dataset = TextDataset('./data/shakespeare.txt', tokenizer1, max_len  = 512)
-dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
+    merged = AutoencoderMerged([model1, model2], 
+                               training_cfg, 
+                               layer=config['layer'], 
+                               device=device).to(device)
+    param_count = sum(p.numel() for p in merged.parameters() if p.requires_grad)
+    print(f"Number of trainable parameters: {param_count}")
+
+    for name, param in merged.named_parameters():
+        print(f"{name}: {param.shape}")
 
 
-optimizer = torch.optim.Adam(merged.parameters(), lr = training_cfg.learning_rate)
-wandb_config = {
-        "learning_rate": training_cfg.learning_rate,
-        "epochs": training_cfg.num_train_epochs,
-        "batch_size": training_cfg.per_device_train_batch_size,
-        "model_architecture": "AutoencoderMerged",
-        "dataset": "Shakespeare"
-    }
+    test_input = tokenizer1(["I am a test input", "This is another test"], return_tensors='pt', padding=True)['input_ids'].to(device)
+    losses = merged(test_input)
+    print("Losses:", losses)
 
 
-wandb.init(project="model_merging", config=wandb_config)
+    losses = [loss for loss in losses]
+    dataset = TextDataset(config['train_dataset'], tokenizer1, max_len  = 512)
+    dataloader = DataLoader(dataset, batch_size = training_cfg.per_device_train_batch_size, shuffle = True)
 
 
-trained_model = train(merged, dataloader, optimizer, training_cfg)
+    optimizer = torch.optim.Adam(merged.parameters(), lr = training_cfg.learning_rate)
+    wandb_config = {
+            "learning_rate": training_cfg.learning_rate,
+            "epochs": training_cfg.num_train_epochs,
+            "batch_size": training_cfg.per_device_train_batch_size,
+            "model_architecture": "AutoencoderMerged",
+            "dataset": config['dataset_name']
+        }
 
 
-wandb.finish()
+    wandb.init(project="model_merging", config=wandb_config)
+
+
+    trained_model = train(merged, 
+                          dataloader, 
+                          device, 
+                          layer=config['layer'], 
+                          optimizer=optimizer, 
+                          training_cfg=training_cfg)
+
+
+    wandb.finish()
+    
+    return trained_model

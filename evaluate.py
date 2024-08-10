@@ -25,9 +25,8 @@ class TextDataset(Dataset):
         encoding = self.tokenizer(line, truncation=True, max_length=self.max_len, padding='max_length', return_tensors='pt')
         return encoding['input_ids'].squeeze()
 
-class CustomEvaluateArguments(TrainingArguments):
-    def __init__(self, *args, multiplier=1, d_models=[], lambda_l1=1, lambda_cos=2, **kwargs):
-        super().__init__(*args, **kwargs)
+class CustomEvaluateArguments():
+    def __init__(self, multiplier=1, d_models=[], lambda_l1=1, lambda_cos=2):
         self.multiplier = multiplier
         self.d_models = d_models
         self.lambda_l1 = lambda_l1
@@ -64,38 +63,48 @@ def evaluate_model(model, dataloader, device):
     avg_loss = total_loss / len(dataloader)
     return avg_loss
 
+def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(device)
 
-eval_file_path = './data/shakespeare.txt'
-model_weights_path = './results/model_epoch_2_loss_0.0000.pt'
-max_len = 32
-batch_size = 32
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    import yaml
+    with open('eval_merged.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+        f.close()
+        
+    eval_file_path = config['eval_dataset']
+    model_weights_path = config['checkpoint_to_test']
+    max_len = config['max_len']
+    batch_size = config['batch_size']
 
-model_name1 = "Sharathhebbar24/math_gpt2_sft"
-tokenizer1 = AutoTokenizer.from_pretrained(model_name1)
-model1 = AutoModelForCausalLM.from_pretrained(model_name1).to(device)
+    model_name1 = "Sharathhebbar24/math_gpt2_sft"
+    tokenizer1 = AutoTokenizer.from_pretrained(model_name1)
+    model1 = AutoModelForCausalLM.from_pretrained(model_name1).to(device)
 
-model_name2 = "yoavgur/gpt2-bash-history-baseline"
-tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
-model2 = AutoModelForCausalLM.from_pretrained(model_name2).to(device)
+    model_name2 = "yoavgur/gpt2-bash-history-baseline"
+    tokenizer2 = AutoTokenizer.from_pretrained(model_name2)
+    model2 = AutoModelForCausalLM.from_pretrained(model_name2).to(device)
 
-eval_dataloader = load_dataset(eval_file_path, tokenizer1, max_len, batch_size)
+    eval_dataloader = load_dataset(eval_file_path, tokenizer1, max_len, batch_size)
 
-cfg = CustomEvaluateArguments(
-    output_dir='./results',
-    multiplier=70,
-    d_models=[768, 768],
-    lambda_l1=0.5,
-    lambda_cos=0.5,
-)
+    cfg = CustomEvaluateArguments(
+        multiplier=config['multiplier'],
+        d_models=config['d_models'],
+        lambda_l1=config['lambda_l1'],
+        lambda_cos=config['lambda_cos'],
+    )
 
-merged_model = load_merged_model(model_weights_path, cfg, [model1, model2], layer=-2, device=device)
+    merged_model = load_merged_model(model_weights_path, 
+                                     cfg, 
+                                     models=[model1, model2], 
+                                     layer=config['layer'], 
+                                     device=device)
 
-mergedcfg=MergedModelArguments()
+    mergedcfg=MergedModelArguments()
 
-model=MergedModel([model1, model2], mergedcfg, device, [merged_model])
+    model=MergedModel([model1, model2], mergedcfg, device, [merged_model])
 
-avg_loss = evaluate_model(model, eval_dataloader, device)
+    avg_loss = evaluate_model(model, eval_dataloader, device)
 
-print(f"Evaluation Results:")
-print(f"Average Cross Entropy Loss: {avg_loss:.4f}")
+    print(f"Evaluation Results:")
+    print(f"Average Cross Entropy Loss: {avg_loss:.4f}")

@@ -1,0 +1,11 @@
+output_dir: './results'          # output directory
+learning_rate: 0.0003           # learning rate
+multiplier: 70                # katent_dim=res_dim * d_model
+d_models: [768, 768]             # no comments
+lambda_l1: 0.5
+lambda_cos: 0.5
+layer: -3
+batch_size: 32
+num_train_epochs: 3              # total number of training epochs
+train_dataset: './data/shakespeare.txt'    # training dataset
+dataset_name: 'shakespeare'      # dataset name
