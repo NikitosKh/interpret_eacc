@@ -69,7 +69,22 @@ class AutoencoderMerged(nn.Module):
         model_outputs = []
         with torch.no_grad():
             for model in self.models:
-                output = model(x, output_hidden_states=True).hidden_states[self.layer]
+                class Embedding(nn.Module):
+                    def __init__(self, wte, wpe, drop):
+                        super(Embedding, self).__init__()
+                        self.wte = wte
+                        self.wpe = wpe
+                        self.drop = drop
+
+                    def forward(self, x):
+                        return (self.drop(self.wte(x) + self.wpe(torch.arange(x.size(1), device=x.device))),)
+
+                model_slice = [Embedding(model.transformer.wte, model.transformer.wpe, model.transformer.drop)] + list(model.transformer.h[0:self.layer+1]) 
+                output=x
+                
+                for module in model_slice:
+                        output=module(output)[0]
+                        
                 model_outputs.append(output)
 
         losses = []

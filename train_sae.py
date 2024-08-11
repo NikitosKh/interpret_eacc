@@ -93,7 +93,7 @@ def train(model, train_dataloader, device, layer, optimizer, cfg):
     return model
 
 def save_model(model, output_dir, epoch, layer, loss):
-    model_save_path = f"{output_dir}/model_epoch_{epoch+1}_layer_{model}_loss_{loss:.4f}.pt"
+    model_save_path = f"{output_dir}/model_epoch_{epoch+1}_layer_{layer}_loss_{loss:.4f}.pt"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     torch.save(model.state_dict(), model_save_path)

@@ -120,7 +120,7 @@ class MergedModel(nn.Module):
                   else:
                       current_slice_of_modules[j] = model.transformer.h[prev_i:i+1]
                         
-                  prev_i=i    
+                  prev_i=i 
                   
                   if j==0:
                       for module in current_slice_of_modules[j]:
