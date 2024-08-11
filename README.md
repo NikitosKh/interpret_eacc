@@ -1,5 +1,3 @@
-Certainly! Here is the README section tailored for a GitHub repository:
-
 ---
 
 # Interpret AI
