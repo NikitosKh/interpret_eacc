@@ -25,17 +25,37 @@ class Autoencoder(nn.Module):
         
         self.l2 = nn.MSELoss(reduction='mean')
         
-    def encode(self, x):
-        return nn.ReLU()(einsum(x, self.W_encode, 'b c d, d h -> b c h') + self.bias_encode) 
+    def encode(self):
+        class Encoder(nn.Module):
+            def __init__(self, W_encode, bias_encode):
+                super(Encoder, self).__init__()
+                self.encoder = W_encode
+                self.relu=nn.ReLU()
+                self.bias_encode = bias_encode
+
+            def forward(self, x):
+
+                return nn.ReLU()(einsum(x, self.encoder, 'b c d, d h -> b c h')) + self.bias_encode
+              
+        return Encoder(self.W_encode, self.bias_encode)
       
-    def decode(self, x):
-        return einsum(x, self.W_decode, 'b c h, h d -> b c d') + self.bias_decode    
+    def decode(self):
+        class Decoder(nn.Module):
+            def __init__(self, W_decode, bias_decode):
+                super(Decoder, self).__init__()
+                self.decoder = W_decode
+                self.bias_decode = bias_decode
+
+            def forward(self, x):
+                return einsum(x, self.decoder, 'b c h, h d -> b c d') + self.bias_decode
+              
+        return Decoder(self.W_decode, self.bias_decode)    
 
     def forward(self, x):
-        latent_vector = self.encode(x)
+        latent_vector = self.encode()(x)
         loss_l1 = torch.abs(latent_vector).mean()
 
-        restored = self.decode(latent_vector)
+        restored = self.decode()(latent_vector)
         loss_l2 = self.l2(restored, x)
 
         return (latent_vector, loss_l1, loss_l2)
@@ -110,64 +130,19 @@ class AutoencoderMerged(nn.Module):
 
         return losses, (l1_log, l2_log, cos_loss)
 
-
-    def get_transitions(self):
-        class Transition(nn.Module):
-            def __init__(self, endoder, decoder):
-                super(Transition, self).__init__()
-
-                self.encoder = endoder
-                self.relu=nn.ReLU()
-                self.decoder = decoder
-
-            def forward(self, x):
-                latent_vector = nn.ReLU()(einsum(x, self.encoder, 'b c d, d h -> b c h'))
-
-                restored = einsum(latent_vector, self.decoder, 'b c h, h d -> b c d')
-                return restored
-
-        transitions=[[None]*len(self.models) for _ in range(len(self.models))]
-
-        for i in range(1, len(self.models)):
-            transitions[i][0] = Transition(self.autoencoders[i].W_encode,
-                                                           self.autoencoders[0].W_decode)
-
-        return transitions
-
     def get_encoders(self):
-        class Encoder(nn.Module):
-            def __init__(self, endoder):
-                super(Encoder, self).__init__()
-
-                self.encoder = endoder
-                self.relu=nn.ReLU()
-
-            def forward(self, x):
-                encoding = nn.ReLU()(einsum(x, self.encoder, 'b c d, d h -> b c h'))
-                
-                return encoding
-        
         encoders=[None]*len(self.models)
 
         for i in range(0, len(self.models)):
-            encoders[i] = Encoder(self.autoencoders[i].W_encode)
+            encoders[i] = self.autoencoders[i].encode()
 
         return encoders
       
-    def get_decoders_to_0(self):
-        class Transition(nn.Module):
-            def __init__(self, decoder):
-                super(Transition, self).__init__()
-                self.decoder = decoder
+    def get_decoders_to_0(self):        
+        # decoders=[None]*len(self.models)
 
-            def forward(self, x):
-                decoding = einsum(x, self.decoder, 'b c h, h d -> b c d')
-                return decoding
-        
-        decoders=[None]*len(self.models)
+        # for i in range(1, len(self.models)):
+        #     decoders[i] = self.autoencoders[0].W_decode
 
-        for i in range(1, len(self.models)):
-            decoders[i] = Transition(self.autoencoders[0].W_decode)
-
-        return decoders  
+        return self.autoencoders[0].decode()
 

@@ -75,7 +75,7 @@ class MergedModel(nn.Module):
                     logits[j]=logits_temp
                       
                     
-                    logits[0]+=self.decoders[i][j](self.encoders[i][j](logits_temp))
+                    logits[0]+=self.decoders[i](self.encoders[i][j](logits_temp))
                         
                 if return_embeddings:
                         embeddings[i][0].append(self.encoders[i][j](logits[j]).unsqueeze(0))                      
@@ -120,7 +120,7 @@ class MergedModel(nn.Module):
                   else:
                       current_slice_of_modules[j] = model.transformer.h[prev_i:i+1]
                         
-                  prev_i=i 
+                  prev_i=i
                   
                   if j==0:
                       for module in current_slice_of_modules[j]:
@@ -132,7 +132,7 @@ class MergedModel(nn.Module):
                           logits_temp=module(logits_temp)[0]
                           
                       logits[j]=logits_temp  
-                      logits[0]+=self.decoders[i][j](self.encoders[i][j](logits_temp))
+                      logits[0]+=self.decoders[i](self.encoders[i][j](logits_temp))
           
               logits[0]/=len(self.models)            
 
