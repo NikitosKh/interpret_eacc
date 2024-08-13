@@ -1,3 +1,4 @@
+mode: 'propogate'               # propogate or merge
 multiplier: 70                   # latent_dim=res_dim * d_model
 d_models: [768, 768]            # no comments
 lambda_l1: 0.5
