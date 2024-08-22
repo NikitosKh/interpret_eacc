@@ -30,7 +30,8 @@ InterpretAI/
 ├── evaluate_merged_model.py
 ├── README.md
 ├── requirements.txt
-├── evaluate.py
+├── evaluate_loss.py
+├── evaluate_lambada.py
 ├── eval_merged.yaml
 └── [other scripts and files]
 ```
